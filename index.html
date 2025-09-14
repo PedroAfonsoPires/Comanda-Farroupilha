@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <title>Comanda Farroupilha</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#166534">
 </head>
 <body class="min-h-screen bg-gradient-to-br from-green-50 to-yellow-50">
 
@@ -87,13 +85,14 @@
   </div>
 
   <script>
-    // Produtos
+    // Produtos atualizados
     const products = [
-      { id: 1, name: 'Água s/ Gás', price: 2.50, stock: 100, sold: 0 },
-      { id: 2, name: 'Água c/ Gás', price: 3.00, stock: 50, sold: 0 },
-      { id: 3, name: 'Pepsi', price: 5.00, stock: 60, sold: 0 },
-      { id: 4, name: 'Guaraná', price: 5.00, stock: 60, sold: 0 },
-      { id: 5, name: 'Amstel', price: 6.50, stock: 40, sold: 0 }
+      { id: 1, name: 'Água s/ Gás 500ml', price: 2.00, stock: 100, sold: 0 },
+      { id: 2, name: 'Água c/ Gás 500ml', price: 3.00, stock: 50, sold: 0 },
+      { id: 3, name: 'Refrigerante 350ml', price: 5.00, stock: 60, sold: 0 },
+      { id: 4, name: 'Amstel 350ml', price: 6.00, stock: 40, sold: 0 },
+      { id: 5, name: 'Vinho Ideologia Assemblage Batalha', price: 50.00, stock: 20, sold: 0 },
+      { id: 6, name: 'Espumante Nature Forte Santa Tecla', price: 70.00, stock: 10, sold: 0 }
     ];
 
     let sales = JSON.parse(localStorage.getItem("sales")) || [];
@@ -133,6 +132,21 @@
       renderCart();
     }
 
+    function changeQuantity(id, delta) {
+      const item = cart.find(i => i.id === id);
+      if (!item) return;
+      item.quantity += delta;
+      if (item.quantity <= 0) {
+        cart = cart.filter(i => i.id !== id);
+      }
+      renderCart();
+    }
+
+    function removeFromCart(id) {
+      cart = cart.filter(i => i.id !== id);
+      renderCart();
+    }
+
     function renderCart() {
       const cartItems = document.getElementById("cartItems");
       const cartCount = document.getElementById("cartCount");
@@ -143,9 +157,14 @@
         total += item.price * item.quantity;
         count += item.quantity;
         cartItems.innerHTML += `
-          <div class="flex justify-between bg-gray-50 p-2 rounded">
-            <span>${item.name} x${item.quantity}</span>
-            <span>R$ ${(item.price*item.quantity).toFixed(2)}</span>
+          <div class="flex justify-between items-center bg-gray-50 p-2 rounded">
+            <span>${item.name}</span>
+            <div class="flex items-center gap-2">
+              <button onclick="changeQuantity(${item.id}, -1)" class="px-2 bg-red-500 text-white rounded">-</button>
+              <span>${item.quantity}</span>
+              <button onclick="changeQuantity(${item.id}, 1)" class="px-2 bg-green-500 text-white rounded">+</button>
+              <button onclick="removeFromCart(${item.id})" class="px-2 bg-gray-600 text-white rounded">x</button>
+            </div>
           </div>`;
       });
       cartCount.innerText = count;
@@ -190,9 +209,30 @@
     function renderReports() {
       const div = document.getElementById("reportList");
       div.innerHTML = "";
-      sales.forEach(s => {
-        div.innerHTML += `<div class="border p-2 mb-2 rounded">Venda #${s.id} - R$ ${s.total.toFixed(2)}</div>`;
+      sales.forEach((s, index) => {
+        div.innerHTML += `
+          <div class="border p-2 mb-2 rounded flex justify-between items-center">
+            <span>Venda #${index + 1} - R$ ${s.total.toFixed(2)}</span>
+            <button onclick="removeSale(${index})" class="px-2 py-1 bg-red-500 text-white rounded">Remover</button>
+          </div>`;
       });
+    }
+
+    function removeSale(index) {
+      const sale = sales[index];
+      // devolve estoque
+      sale.items.forEach(item => {
+        const p = products.find(pr => pr.id === item.id);
+        if (p) {
+          p.stock += item.quantity;
+          p.sold -= item.quantity;
+        }
+      });
+      sales.splice(index, 1);
+      localStorage.setItem("sales", JSON.stringify(sales));
+      renderReports();
+      renderProducts();
+      renderStats();
     }
 
     // Stats
@@ -218,12 +258,6 @@
     renderProducts();
     renderCart();
     renderStats();
-  </script>
-  <script>
-    if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("service-worker.js")
-        .then(() => console.log("Service Worker registrado!"));
-    }
   </script>
 </body>
 </html>
