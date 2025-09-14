@@ -1,9 +1,17 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <title>Comanda Farroupilha</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Comanda Farroupilha - PWA</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#166534">
+  <style>
+    /* Ajustes pequenos além do Tailwind */
+    .tab-btn { transition: all .18s ease; }
+    .tab-active { transform: scale(1.03); box-shadow: 0 6px 18px rgba(16,185,129,.12); }
+  </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-green-50 to-yellow-50">
 
@@ -32,10 +40,10 @@
   <!-- Main -->
   <div class="max-w-6xl mx-auto p-4">
     <!-- Tabs -->
-    <div class="flex justify-center gap-2 mb-6">
-      <button onclick="showTab('vendas')" class="tab-btn bg-green-600 text-white px-4 py-2 rounded-lg">Vendas</button>
-      <button onclick="showTab('estoque')" class="tab-btn bg-white px-4 py-2 rounded-lg border">Estoque</button>
-      <button onclick="showTab('relatorios')" class="tab-btn bg-white px-4 py-2 rounded-lg border">Relatórios</button>
+    <div id="tabs" class="flex justify-center gap-2 mb-6">
+      <button class="tab-btn bg-green-600 text-white px-4 py-2 rounded-lg transform hover:scale-105" data-tab="vendas" onclick="showTab('vendas')">Vendas</button>
+      <button class="tab-btn bg-white px-4 py-2 rounded-lg border transform hover:scale-105" data-tab="estoque" onclick="showTab('estoque')">Estoque</button>
+      <button class="tab-btn bg-white px-4 py-2 rounded-lg border transform hover:scale-105" data-tab="relatorios" onclick="showTab('relatorios')">Relatórios</button>
     </div>
 
     <!-- Vendas -->
@@ -63,14 +71,18 @@
 
     <!-- Estoque -->
     <div id="tab-estoque" class="hidden bg-white rounded-xl shadow-lg p-6">
-      <h2 class="text-xl font-bold mb-4 text-green-800">Controle de Estoque</h2>
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold text-green-800">Controle de Estoque</h2>
+        <button onclick="resetData()" class="px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600">Resetar Dados</button>
+      </div>
       <table class="w-full border">
         <thead class="bg-gray-50">
           <tr>
-            <th class="p-2">Produto</th>
-            <th class="p-2">Preço</th>
-            <th class="p-2">Estoque</th>
-            <th class="p-2">Vendidos</th>
+            <th class="p-2 text-left">Produto</th>
+            <th class="p-2 text-center">Preço</th>
+            <th class="p-2 text-center">Estoque</th>
+            <th class="p-2 text-center">Vendidos</th>
+            <th class="p-2 text-center">Ações</th>
           </tr>
         </thead>
         <tbody id="stockTable"></tbody>
@@ -80,13 +92,20 @@
     <!-- Relatórios -->
     <div id="tab-relatorios" class="hidden bg-white rounded-xl shadow-lg p-6">
       <h2 class="text-xl font-bold mb-4 text-green-800">Relatórios</h2>
-      <div id="reportList"></div>
+      <div id="reportList" class="space-y-3"></div>
     </div>
   </div>
 
+  <!-- Service Worker registration (PWA) -->
   <script>
-    // Produtos atualizados
-    const products = [
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js").then(() => console.log("SW registrado"));
+    }
+  </script>
+
+  <script>
+    // ======= Dados iniciais (não modificar diretamente) =======
+    const INITIAL_PRODUCTS = [
       { id: 1, name: 'Água s/ Gás 500ml', price: 2.00, stock: 100, sold: 0 },
       { id: 2, name: 'Água c/ Gás 500ml', price: 3.00, stock: 50, sold: 0 },
       { id: 3, name: 'Refrigerante 350ml', price: 5.00, stock: 60, sold: 0 },
@@ -95,39 +114,88 @@
       { id: 6, name: 'Espumante Nature Forte Santa Tecla', price: 70.00, stock: 10, sold: 0 }
     ];
 
-    let sales = JSON.parse(localStorage.getItem("sales")) || [];
+    // ======= Estado =======
+    let products = [];
+    let sales = [];
     let cart = [];
 
-    document.getElementById("eventDate").innerText = new Date().toLocaleDateString("pt-BR");
+    const STORAGE_KEY = 'farroupilha-data';
 
-    // Renderizar produtos
+    // Data load/save
+    function loadData() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          // se tiver produtos salvos usa, senão inicial
+          products = (parsed.products && Array.isArray(parsed.products)) ? parsed.products : JSON.parse(JSON.stringify(INITIAL_PRODUCTS));
+          sales = Array.isArray(parsed.sales) ? parsed.sales : [];
+        } catch (e) {
+          console.error('Erro ao ler storage:', e);
+          products = JSON.parse(JSON.stringify(INITIAL_PRODUCTS));
+          sales = [];
+        }
+      } else {
+        products = JSON.parse(JSON.stringify(INITIAL_PRODUCTS));
+        sales = [];
+      }
+
+      // sanitiza e evita negativos
+      products.forEach(p => {
+        p.stock = Math.max(0, Number(p.stock) || 0);
+        p.sold = Math.max(0, Number(p.sold) || 0);
+        p.price = Number(p.price) || 0;
+      });
+      sales = sales.map(s => {
+        s.total = Number(s.total) || 0;
+        s.items = Array.isArray(s.items) ? s.items.map(it => ({ ...it, quantity: Number(it.quantity) || 0 })) : [];
+        return s;
+      });
+    }
+
+    function saveData() {
+      const payload = { products, sales };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    }
+
+    // ======= Utils =======
+    function formatMoney(v){ return "R$ " + Number(v || 0).toFixed(2); }
+
+    // ======= Render Produtos (Vendas) =======
     function renderProducts() {
       const list = document.getElementById("productList");
       list.innerHTML = "";
       products.forEach(p => {
+        const disabled = p.stock <= 0 ? 'disabled' : '';
         list.innerHTML += `
-          <div class="border rounded-lg p-4 ${p.stock === 0 ? 'opacity-50' : ''}">
-            <div class="flex justify-between">
-              <h3>${p.name}</h3>
-              <span class="font-bold text-green-600">R$ ${p.price.toFixed(2)}</span>
+          <div class="border rounded-lg p-4 ${p.stock === 0 ? 'opacity-50' : 'bg-white'}">
+            <div class="flex justify-between mb-2">
+              <h3 class="font-medium">${p.name}</h3>
+              <span class="font-bold text-green-600">${formatMoney(p.price)}</span>
             </div>
-            <p class="text-sm">Estoque: ${p.stock}</p>
-            <button onclick="addToCart(${p.id})" ${p.stock === 0 ? 'disabled' : ''} class="mt-2 w-full bg-green-600 text-white py-1 rounded">
+            <p class="text-sm text-gray-600 mb-3">Estoque: <span id="prod-stock-${p.id}">${p.stock}</span></p>
+            <button ${disabled} onclick="addToCart(${p.id})" class="mt-2 w-full ${disabled ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'} py-2 rounded">
               ${p.stock === 0 ? 'Sem Estoque' : 'Adicionar'}
             </button>
-          </div>`;
+          </div>
+        `;
       });
     }
 
-    // Carrinho
+    // ======= Carrinho =======
     function addToCart(id) {
       const product = products.find(p => p.id === id);
-      if (!product || product.stock === 0) return;
+      if (!product || product.stock <= 0) return;
       const existing = cart.find(i => i.id === id);
       if (existing) {
+        // limita a quantidade ao estoque disponível
+        if (existing.quantity + 1 > product.stock) {
+          alert('Quantidade maior que o estoque disponível.');
+          return;
+        }
         existing.quantity++;
       } else {
-        cart.push({ ...product, quantity: 1 });
+        cart.push({ id: product.id, name: product.name, price: product.price, quantity: 1 });
       }
       renderCart();
     }
@@ -135,10 +203,27 @@
     function changeQuantity(id, delta) {
       const item = cart.find(i => i.id === id);
       if (!item) return;
+      const product = products.find(p => p.id === id);
+      if (!product) return;
+      if (delta > 0 && item.quantity + delta > product.stock) {
+        alert('Quantidade maior que o estoque disponível.');
+        return;
+      }
       item.quantity += delta;
       if (item.quantity <= 0) {
         cart = cart.filter(i => i.id !== id);
       }
+      renderCart();
+    }
+
+    function setQuantity(id, qty) {
+      const item = cart.find(i => i.id === id);
+      const product = products.find(p => p.id === id);
+      if (!item || !product) return;
+      const q = Math.max(0, Math.floor(Number(qty) || 0));
+      if (q > product.stock) { alert('Quantidade maior que o estoque disponível.'); return; }
+      if (q === 0) cart = cart.filter(i => i.id !== id);
+      else item.quantity = q;
       renderCart();
     }
 
@@ -158,106 +243,228 @@
         count += item.quantity;
         cartItems.innerHTML += `
           <div class="flex justify-between items-center bg-gray-50 p-2 rounded">
-            <span>${item.name}</span>
-            <div class="flex items-center gap-2">
-              <button onclick="changeQuantity(${item.id}, -1)" class="px-2 bg-red-500 text-white rounded">-</button>
-              <span>${item.quantity}</span>
-              <button onclick="changeQuantity(${item.id}, 1)" class="px-2 bg-green-500 text-white rounded">+</button>
-              <button onclick="removeFromCart(${item.id})" class="px-2 bg-gray-600 text-white rounded">x</button>
+            <div class="flex-1">
+              <div class="font-medium text-sm">${item.name}</div>
+              <div class="text-xs text-gray-600">R$ ${item.price.toFixed(2)} x 
+                <input type="number" min="0" value="${item.quantity}" oninput="setQuantity(${item.id}, this.value)" class="w-20 ml-1 border rounded px-1 py-0.5 text-sm inline"/>
+              </div>
             </div>
-          </div>`;
+            <div class="flex items-center gap-2 ml-4">
+              <button onclick="changeQuantity(${item.id}, -1)" class="px-2 bg-red-500 text-white rounded">-</button>
+              <div class="font-bold">${item.quantity}</div>
+              <button onclick="changeQuantity(${item.id}, 1)" class="px-2 bg-green-500 text-white rounded">+</button>
+              <button onclick="removeFromCart(${item.id})" class="ml-2 px-2 bg-gray-600 text-white rounded">x</button>
+            </div>
+            <div class="ml-3 font-bold text-green-600">R$ ${(item.price * item.quantity).toFixed(2)}</div>
+          </div>
+        `;
       });
       cartCount.innerText = count;
-      cartTotal.innerText = "R$ " + total.toFixed(2);
+      cartTotal.innerText = formatMoney(total);
     }
 
-    // Finalizar venda
+    // ======= Finalizar venda =======
     function completeSale() {
-      if (cart.length === 0) return;
-      let total = 0;
-      cart.forEach(item => {
-        total += item.price * item.quantity;
+      if (cart.length === 0) { alert('Carrinho vazio.'); return; }
+      // checagem rápida de estoque antes de finalizar
+      for (const item of cart) {
         const p = products.find(pr => pr.id === item.id);
-        p.stock -= item.quantity;
-        p.sold += item.quantity;
+        if (!p || item.quantity > p.stock) {
+          alert(`Estoque insuficiente para ${item.name}.`);
+          return;
+        }
+      }
+
+      const total = cart.reduce((s, it) => s + it.price * it.quantity, 0);
+      const sale = {
+        id: Date.now(),
+        timestamp: new Date().toLocaleString('pt-BR'),
+        items: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity })),
+        total: Number(total.toFixed(2))
+      };
+
+      // atualizar estoque e vendidos
+      sale.items.forEach(it => {
+        const p = products.find(pr => pr.id === it.id);
+        if (p) {
+          p.stock = Math.max(0, Number(p.stock) - Number(it.quantity));
+          p.sold = Math.max(0, Number(p.sold) + Number(it.quantity));
+        }
       });
-      sales.push({ id: Date.now(), total, items: [...cart] });
-      localStorage.setItem("sales", JSON.stringify(sales));
+
+      sales.push(sale);
+      saveData();
       cart = [];
       renderProducts();
       renderCart();
       renderStats();
-      alert("Venda concluída! Total R$ " + total.toFixed(2));
+      alert(`Venda concluída! Total ${formatMoney(sale.total)}`);
     }
 
-    // Estoque
+    // ======= Estoque (alterar manualmente) =======
     function renderStock() {
       const table = document.getElementById("stockTable");
       table.innerHTML = "";
       products.forEach(p => {
         table.innerHTML += `
-          <tr>
+          <tr class="border-b hover:bg-gray-50">
             <td class="p-2">${p.name}</td>
-            <td class="p-2">R$ ${p.price.toFixed(2)}</td>
-            <td class="p-2">${p.stock}</td>
-            <td class="p-2">${p.sold}</td>
-          </tr>`;
+            <td class="p-2 text-center">${formatMoney(p.price)}</td>
+            <td class="p-2 text-center">
+              <div class="inline-flex items-center gap-2">
+                <button onclick="updateStock(${p.id}, ${p.stock} - 1)" class="px-2 py-1 bg-red-100 rounded">-</button>
+                <input id="stock-input-${p.id}" type="number" class="w-20 text-center border rounded px-2 py-1" value="${p.stock}" min="0" oninput="updateStock(${p.id}, this.value)"/>
+                <button onclick="updateStock(${p.id}, ${p.stock} + 1)" class="px-2 py-1 bg-green-100 rounded">+</button>
+              </div>
+            </td>
+            <td class="p-2 text-center font-semibold text-blue-600">${p.sold}</td>
+            <td class="p-2 text-center">
+              <button onclick="resetProduct(${p.id})" class="px-2 py-1 bg-yellow-500 text-white rounded">Reset</button>
+            </td>
+          </tr>
+        `;
       });
     }
 
-    // Relatórios
+    function updateStock(id, value) {
+      const p = products.find(pr => pr.id === id);
+      if (!p) return;
+      const newStock = Math.max(0, Math.floor(Number(value) || 0));
+      p.stock = newStock;
+      // atualiza input exibido (caso value programático)
+      const input = document.getElementById(`stock-input-${id}`);
+      if (input) input.value = newStock;
+      saveData();
+      renderProducts();
+      renderStock();
+      renderStats();
+    }
+
+    // Restaura produto ao estado inicial (opcional)
+    function resetProduct(id) {
+      const p = products.find(pr => pr.id === id);
+      const initial = INITIAL_PRODUCTS.find(ip => ip.id === id);
+      if (!p || !initial) return;
+      if (!confirm(`Resetar "${p.name}" para estoque inicial (${initial.stock}) e vendidos 0?`)) return;
+      p.stock = initial.stock;
+      p.sold = 0;
+      saveData();
+      renderProducts();
+      renderStock();
+      renderStats();
+    }
+
+    // ======= Relatórios =======
     function renderReports() {
       const div = document.getElementById("reportList");
       div.innerHTML = "";
-      sales.forEach((s, index) => {
+      if (sales.length === 0) {
+        div.innerHTML = `<p class="text-center text-gray-500 py-8">Nenhuma venda registrada ainda.</p>`;
+        return;
+      }
+      sales.forEach((s, idx) => {
         div.innerHTML += `
-          <div class="border p-2 mb-2 rounded flex justify-between items-center">
-            <span>Venda #${index + 1} - R$ ${s.total.toFixed(2)}</span>
-            <button onclick="removeSale(${index})" class="px-2 py-1 bg-red-500 text-white rounded">Remover</button>
-          </div>`;
+          <div class="border rounded-lg p-3 flex justify-between items-start gap-4">
+            <div class="flex-1">
+              <div class="flex justify-between items-center mb-2">
+                <div class="font-semibold">Venda #${idx+1} <span class="text-xs text-gray-500 ml-2">${s.timestamp || ''}</span></div>
+                <div class="font-bold text-green-600">${formatMoney(s.total)}</div>
+              </div>
+              <div class="text-sm text-gray-700 space-y-1">
+                ${s.items.map(it => `<div>${it.name} x ${it.quantity} — R$ ${(it.price * it.quantity).toFixed(2)}</div>`).join('')}
+              </div>
+            </div>
+            <div class="flex flex-col gap-2">
+              <button onclick="removeSale(${idx})" class="px-3 py-1 bg-red-500 text-white rounded">Remover</button>
+            </div>
+          </div>
+        `;
       });
     }
 
     function removeSale(index) {
+      if (!confirm('Remover esta venda? O estoque será ajustado automaticamente.')) return;
       const sale = sales[index];
-      // devolve estoque
+      if (!sale) return;
+      // devolve estoque e ajusta vendidos (clamp >= 0)
       sale.items.forEach(item => {
         const p = products.find(pr => pr.id === item.id);
         if (p) {
-          p.stock += item.quantity;
-          p.sold -= item.quantity;
+          p.stock = Math.max(0, Number(p.stock) + Number(item.quantity));
+          p.sold = Math.max(0, Number(p.sold) - Number(item.quantity));
         }
       });
       sales.splice(index, 1);
-      localStorage.setItem("sales", JSON.stringify(sales));
-      renderReports();
+      saveData();
       renderProducts();
+      renderReports();
+      renderStock();
       renderStats();
     }
 
-    // Stats
+    // ======= Stats =======
     function renderStats() {
-      const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
-      const totalItems = products.reduce((sum, p) => sum + p.sold, 0);
-      document.getElementById("totalRevenue").innerText = "R$ " + totalRevenue.toFixed(2);
+      const totalRevenue = sales.reduce((sum, s) => sum + Number(s.total || 0), 0);
+      const totalItems = products.reduce((sum, p) => sum + Math.max(0, Number(p.sold || 0)), 0);
+      document.getElementById("totalRevenue").innerText = formatMoney(totalRevenue);
       document.getElementById("totalSales").innerText = sales.length;
       document.getElementById("totalItemsSold").innerText = totalItems;
     }
 
-    // Tabs
-    function showTab(tab) {
-      ["vendas","estoque","relatorios"].forEach(t => {
-        document.getElementById("tab-"+t).classList.add("hidden");
+    // ======= Tabs UI =======
+    function setActiveTabButton(tabKey) {
+      const buttons = document.querySelectorAll('#tabs .tab-btn');
+      buttons.forEach(btn => {
+        if (btn.dataset.tab === tabKey) {
+          btn.classList.add('tab-active','bg-green-600','text-white');
+          btn.classList.remove('bg-white','border','text-gray-700');
+        } else {
+          btn.classList.remove('tab-active');
+          btn.classList.remove('bg-green-600','text-white');
+          btn.classList.add('bg-white','border','text-gray-700');
+        }
       });
-      document.getElementById("tab-"+tab).classList.remove("hidden");
-      if (tab === "estoque") renderStock();
-      if (tab === "relatorios") renderReports();
     }
 
-    // Inicialização
+    function showTab(tab) {
+      ['vendas','estoque','relatorios'].forEach(t => {
+        const node = document.getElementById('tab-'+t);
+        if (node) node.classList.add('hidden');
+      });
+      const node = document.getElementById('tab-'+tab);
+      if (node) node.classList.remove('hidden');
+
+      setActiveTabButton(tab);
+
+      if (tab === 'estoque') renderStock();
+      if (tab === 'relatorios') renderReports();
+    }
+
+    // Resetar todos os dados para valores iniciais
+    function resetData() {
+      if (!confirm('Resetar TODOS os dados para o padrão? Estoque e vendas serão perdidos.')) return;
+      products = JSON.parse(JSON.stringify(INITIAL_PRODUCTS));
+      sales = [];
+      cart = [];
+      saveData();
+      renderProducts();
+      renderCart();
+      renderStock();
+      renderReports();
+      renderStats();
+    }
+
+    // ======= Inicialização =======
+    document.getElementById("eventDate").innerText = new Date().toLocaleDateString("pt-BR");
+    loadData();
     renderProducts();
     renderCart();
     renderStats();
+    // start in vendas tab
+    showTab('vendas');
+
+    // Salva automaticamente sempre que a aba é fechada (fim de sessão)
+    window.addEventListener('beforeunload', saveData);
   </script>
 </body>
 </html>
